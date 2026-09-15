@@ -1,5 +1,17 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Exercise 8: Inngest step functions
+
+The homepage (`app/page.tsx`) demos three Inngest patterns, triggered from the frontend with axios:
+
+1. **Multi-Step (`step.run()`)** — `data/process` event, three sequential steps.
+2. **Delay Step (`step.sleep()`)** — `reminder/schedule` event, sleeps then sends a reminder.
+3. **Wait for Event (`step.waitForEvent()`)** — `workflow/start` + `workflow/approval` events.
+
+Each API route sends the event, then polls the **local Inngest Dev Server** (`http://localhost:8288`) to fetch the function's real output and return it to the frontend.
+
+> **Note on the deployed (Vercel) link:** the "fetch the real output" polling in `app/inngest/devApi.ts` talks to the Inngest Dev Server's local dev-only API (`http://localhost:8288`), which only exists when running `npx inngest-cli dev` alongside `npm run dev` on your own machine. That dev server does not exist in the Vercel deployment, so the buttons on the live link will error. All three flows were verified working end-to-end locally (see commit history / screenshots) — run the project locally per the steps below to see it working live.
+
 ## Getting Started
 
 First, run the development server:
