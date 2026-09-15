@@ -104,24 +104,14 @@ export async function findRunForEvent(
   return null;
 }
 
-async function getRunById(runId: string): Promise<RunSummary | null> {
-  const url = isDevMode ? `${DEV_SERVER_URL}/v1/runs/${runId}` : `${CLOUD_API_URL}/v1/runs/${runId}`;
-  const res = await fetch(cacheBust(url), {
-    cache: "no-store",
-    headers: isDevMode ? {} : cloudHeaders(),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json.data ?? null;
-}
-
 // In dev mode, completion is determined by the dev server's internal trace
 // API (its REST "status" field can flip to "Completed" slightly before the
 // output is actually available). In production, Inngest Cloud's public REST
-// API is used instead, since the dev server's GraphQL trace endpoint only
-// exists locally.
+// API is used instead (the "output" field on the events/runs endpoint —
+// the dev server's GraphQL trace endpoint only exists locally, and Cloud's
+// GET /v1/runs/{id} endpoint does not include output, only events/runs does).
 export async function waitForRunOutput(
-  runId: string,
+  { eventId, runId }: { eventId: string; runId: string },
   { timeoutMs = 20000, intervalMs = 500 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<{ status: string; result: unknown }> {
   const deadline = Date.now() + timeoutMs;
@@ -147,7 +137,7 @@ export async function waitForRunOutput(
   }
 
   while (Date.now() < deadline) {
-    const run = await getRunById(runId);
+    const run = await getRunForEvent(eventId);
     lastStatus = run?.status ?? lastStatus;
 
     if (["Completed", "Failed", "Cancelled"].includes(lastStatus)) {

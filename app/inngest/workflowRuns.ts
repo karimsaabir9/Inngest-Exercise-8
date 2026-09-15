@@ -1,9 +1,16 @@
-const requestIdToRunId = new Map<string, string>();
-
-export function setWorkflowRun(requestId: string, runId: string) {
-  requestIdToRunId.set(requestId, runId);
+// Maps a workflow requestId to its Inngest run/event ids so the approve
+// route can find which run to poll without exposing them to the client.
+interface WorkflowRunRef {
+  runId: string;
+  eventId: string;
 }
 
-export function getWorkflowRun(requestId: string): string | undefined {
-  return requestIdToRunId.get(requestId);
+const requestIdToRun = new Map<string, WorkflowRunRef>();
+
+export function setWorkflowRun(requestId: string, ref: WorkflowRunRef) {
+  requestIdToRun.set(requestId, ref);
+}
+
+export function getWorkflowRun(requestId: string): WorkflowRunRef | undefined {
+  return requestIdToRun.get(requestId);
 }

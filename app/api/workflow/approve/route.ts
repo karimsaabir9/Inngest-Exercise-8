@@ -11,12 +11,12 @@ export async function POST(req: Request) {
     data: { requestId, approved, reason },
   });
 
-  const runId = getWorkflowRun(requestId);
-  if (!runId) {
+  const run = getWorkflowRun(requestId);
+  if (!run) {
     return NextResponse.json({ success: false, error: "No workflow run found for requestId" });
   }
 
-  const { status, result } = await waitForRunOutput(runId, { timeoutMs: 20000 });
+  const { status, result } = await waitForRunOutput(run, { timeoutMs: 20000 });
 
   return NextResponse.json({ success: true, status, result });
 }

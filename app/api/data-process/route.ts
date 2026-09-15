@@ -13,7 +13,10 @@ export async function POST() {
     return NextResponse.json({ success: false, error: "Run was not found" });
   }
 
-  const { status, result } = await waitForRunOutput(run.run_id, { timeoutMs: 20000 });
+  const { status, result } = await waitForRunOutput(
+    { eventId: ids[0], runId: run.run_id },
+    { timeoutMs: 20000 },
+  );
 
   return NextResponse.json({ success: true, status, result });
 }

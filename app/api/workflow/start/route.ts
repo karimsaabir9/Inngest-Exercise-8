@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "Run was not found" });
   }
 
-  setWorkflowRun(requestId, run.run_id);
+  setWorkflowRun(requestId, { runId: run.run_id, eventId: ids[0] });
 
   // The function pauses on step.waitForEvent(), so we only wait for the
   // "process-request" step's output, not the whole run. In production this
