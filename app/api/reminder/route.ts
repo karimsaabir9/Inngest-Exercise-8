@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { inngest } from "@/app/inngest/client";
-import { findRunForEvent, isDevMode, waitForRunOutput } from "@/app/inngest/devApi";
+import { findRunForEvent } from "@/app/inngest/devApi";
 
 export async function POST(req: Request) {
   const { message, delayMinutes } = await req.json();
@@ -15,10 +15,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "Run was not found" });
   }
 
-  const { status, result } = await waitForRunOutput(
-    { eventId: ids[0], runId: run.run_id },
-    { timeoutMs: Number(delayMinutes) * 1000 + (isDevMode ? 15000 : 90000) },
-  );
-
-  return NextResponse.json({ success: true, status, result });
+  // Returns immediately — the frontend polls /api/run-status for the
+  // result instead of this request blocking until the sleep + run finish.
+  return NextResponse.json({ success: true, eventId: ids[0], runId: run.run_id });
 }

@@ -104,48 +104,59 @@ export async function findRunForEvent(
   return null;
 }
 
-// In dev mode, completion is determined by the dev server's internal trace
-// API (its REST "status" field can flip to "Completed" slightly before the
-// output is actually available). In production, Inngest Cloud's public REST
-// API is used instead (the "output" field on the events/runs endpoint —
-// the dev server's GraphQL trace endpoint only exists locally, and Cloud's
-// GET /v1/runs/{id} endpoint does not include output, only events/runs does).
+const DEV_TERMINAL = ["COMPLETED", "FAILED", "CANCELLED"];
+const CLOUD_TERMINAL = ["Completed", "Failed", "Cancelled"];
+
+// A single, non-blocking status check — safe to call from a short-lived
+// request (e.g. a route the frontend polls) without risking a proxy/function
+// timeout on a long-running Inngest Cloud cold start.
+export async function checkRunOnce({
+  eventId,
+  runId,
+}: {
+  eventId: string;
+  runId: string;
+}): Promise<{ status: string; result: unknown; done: boolean }> {
+  if (isDevMode) {
+    const data = await gql<{ runTrace: TraceSpan }>(
+      `query($runID: String!) { runTrace(runID: $runID) { status outputID } }`,
+      { runID: runId },
+    );
+    const trace = data.runTrace;
+    const status = trace?.status ?? "UNKNOWN";
+    // outputID is present as soon as the run starts (it's a pointer, not a
+    // completion signal) — only trust it once the status is a terminal one.
+    if (DEV_TERMINAL.includes(status)) {
+      return { status, result: await resolveOutput(trace?.outputID ?? null), done: true };
+    }
+    return { status, result: null, done: false };
+  }
+
+  const run = await getRunForEvent(eventId);
+  const status = run?.status ?? "UNKNOWN";
+  if (CLOUD_TERMINAL.includes(status)) {
+    return { status, result: parseJsonMaybe(run?.output), done: true };
+  }
+  return { status, result: null, done: false };
+}
+
+// Polls checkRunOnce server-side. Useful for dev (fast, reliable local
+// server) but risky in production, where an Inngest Cloud cold start can
+// take longer than a single HTTP request should block for — prefer having
+// the frontend poll checkRunOnce/its route repeatedly instead.
 export async function waitForRunOutput(
-  { eventId, runId }: { eventId: string; runId: string },
+  ref: { eventId: string; runId: string },
   { timeoutMs = 20000, intervalMs = 500 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<{ status: string; result: unknown }> {
   const deadline = Date.now() + timeoutMs;
-  let lastStatus = "UNKNOWN";
-
-  if (isDevMode) {
-    while (Date.now() < deadline) {
-      const data = await gql<{ runTrace: TraceSpan }>(
-        `query($runID: String!) { runTrace(runID: $runID) { status outputID } }`,
-        { runID: runId },
-      );
-      const trace = data.runTrace;
-      lastStatus = trace?.status ?? lastStatus;
-
-      // outputID is present as soon as the run starts (it's a pointer, not
-      // a completion signal) — only trust it once the status is COMPLETED.
-      if (lastStatus === "COMPLETED" || lastStatus === "FAILED" || lastStatus === "CANCELLED") {
-        return { status: lastStatus, result: await resolveOutput(trace?.outputID ?? null) };
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-    return { status: lastStatus, result: null };
-  }
+  let last = { status: "UNKNOWN", result: null as unknown, done: false };
 
   while (Date.now() < deadline) {
-    const run = await getRunForEvent(eventId);
-    lastStatus = run?.status ?? lastStatus;
-
-    if (["Completed", "Failed", "Cancelled"].includes(lastStatus)) {
-      return { status: lastStatus, result: parseJsonMaybe(run?.output) };
-    }
+    last = await checkRunOnce(ref);
+    if (last.done) return { status: last.status, result: last.result };
     await new Promise((r) => setTimeout(r, intervalMs));
   }
-  return { status: lastStatus, result: null };
+  return { status: last.status, result: null };
 }
 
 // Dev-only: inspects an in-progress run's step-level trace to read a step's

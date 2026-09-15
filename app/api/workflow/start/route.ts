@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { inngest } from "@/app/inngest/client";
 import { findRunForEvent, getStepOutput } from "@/app/inngest/devApi";
-import { setWorkflowRun } from "@/app/inngest/workflowRuns";
 
 export async function POST(req: Request) {
   const { requestId, action } = await req.json();
@@ -16,8 +15,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "Run was not found" });
   }
 
-  setWorkflowRun(requestId, { runId: run.run_id, eventId: ids[0] });
-
   // The function pauses on step.waitForEvent(), so we only wait for the
   // "process-request" step's output, not the whole run. In production this
   // step-level lookup isn't available (Inngest Cloud's public API doesn't
@@ -25,5 +22,8 @@ export async function POST(req: Request) {
   const processed =
     (await getStepOutput(run.run_id, "process-request")) ?? { requestId, action, status: "pending_approval" };
 
-  return NextResponse.json({ success: true, result: processed });
+  // runId/eventId are handed back so the frontend can pass them to the
+  // approve step later. Serverless functions don't share memory between
+  // invocations, so this can't be cached server-side between the two calls.
+  return NextResponse.json({ success: true, result: processed, runId: run.run_id, eventId: ids[0] });
 }

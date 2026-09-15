@@ -3,6 +3,29 @@
 import { useState } from "react";
 import axios from "axios";
 
+// Polls /api/run-status client-side instead of holding one HTTP request
+// open until the run finishes — Inngest Cloud cold starts can take longer
+// than is safe to block a single serverless request/proxy connection for.
+async function pollRunStatus(
+  eventId: string,
+  runId: string,
+  onTick: (data: unknown) => void,
+  { intervalMs = 1500, maxAttempts = 60 }: { intervalMs?: number; maxAttempts?: number } = {},
+) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await axios.get("/api/run-status", { params: { eventId, runId } });
+      onTick(res.data);
+      if (res.data?.done) return;
+    } catch (err) {
+      onTick({ success: false, error: axios.isAxiosError(err) ? err.message : String(err) });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  onTick({ success: false, error: "Timed out waiting for the run to finish" });
+}
+
 function ResultBox({ result }: { result: unknown }) {
   if (result === undefined) return null;
   return (
@@ -38,9 +61,15 @@ function MultiStepDemo() {
 
   const trigger = async () => {
     setLoading(true);
+    setResult({ status: "Sending..." });
     try {
       const res = await axios.post("/api/data-process");
-      setResult(res.data);
+      const { eventId, runId } = res.data;
+      if (!eventId || !runId) {
+        setResult(res.data);
+        return;
+      }
+      await pollRunStatus(eventId, runId, setResult);
     } catch (err) {
       setResult({ error: axios.isAxiosError(err) ? err.message : String(err) });
     } finally {
@@ -58,7 +87,7 @@ function MultiStepDemo() {
         disabled={loading}
         className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background disabled:opacity-50"
       >
-        {loading ? "Sending..." : "Trigger Data Process"}
+        {loading ? "Running..." : "Trigger Data Process"}
       </button>
       <ResultBox result={result} />
     </Card>
@@ -73,12 +102,18 @@ function DelayStepDemo() {
 
   const trigger = async () => {
     setLoading(true);
+    setResult({ status: "Sending..." });
     try {
       const res = await axios.post("/api/reminder", {
         message,
         delayMinutes: delaySeconds,
       });
-      setResult(res.data);
+      const { eventId, runId } = res.data;
+      if (!eventId || !runId) {
+        setResult(res.data);
+        return;
+      }
+      await pollRunStatus(eventId, runId, setResult);
     } catch (err) {
       setResult({ error: axios.isAxiosError(err) ? err.message : String(err) });
     } finally {
@@ -115,7 +150,7 @@ function DelayStepDemo() {
           disabled={loading}
           className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background disabled:opacity-50"
         >
-          {loading ? "Sending..." : "Schedule Reminder"}
+          {loading ? "Running..." : "Schedule Reminder"}
         </button>
       </div>
       <ResultBox result={result} />
@@ -132,15 +167,22 @@ function WaitForEventDemo() {
   const [approveLoading, setApproveLoading] = useState(false);
   const [startResult, setStartResult] = useState<unknown>();
   const [approveResult, setApproveResult] = useState<unknown>();
+  // Held only in memory to hand to the approve step — Vercel serverless
+  // functions don't share state between invocations, so the frontend is
+  // what carries this across the two requests. Never rendered directly.
+  const [runRef, setRunRef] = useState<{ runId: string; eventId: string } | null>(null);
 
   const start = async () => {
     setStartLoading(true);
+    setApproveResult(undefined);
     try {
       const res = await axios.post("/api/workflow/start", {
         requestId,
         action,
       });
-      setStartResult(res.data);
+      const { runId, eventId, ...display } = res.data;
+      setStartResult(display);
+      setRunRef(runId && eventId ? { runId, eventId } : null);
     } catch (err) {
       setStartResult({ error: axios.isAxiosError(err) ? err.message : String(err) });
     } finally {
@@ -149,14 +191,19 @@ function WaitForEventDemo() {
   };
 
   const approve = async () => {
+    if (!runRef) {
+      setApproveResult({ error: "Start the workflow first" });
+      return;
+    }
     setApproveLoading(true);
+    setApproveResult({ status: "Sending..." });
     try {
-      const res = await axios.post("/api/workflow/approve", {
+      await axios.post("/api/workflow/approve", {
         requestId,
         approved,
         reason,
       });
-      setApproveResult(res.data);
+      await pollRunStatus(runRef.eventId, runRef.runId, setApproveResult);
     } catch (err) {
       setApproveResult({ error: axios.isAxiosError(err) ? err.message : String(err) });
     } finally {
@@ -219,10 +266,10 @@ function WaitForEventDemo() {
           </label>
           <button
             onClick={approve}
-            disabled={approveLoading}
-            className="rounded-full border border-black/[.08] px-5 py-2 text-sm font-medium dark:border-white/[.145]"
+            disabled={approveLoading || !runRef}
+            className="rounded-full border border-black/[.08] px-5 py-2 text-sm font-medium dark:border-white/[.145] disabled:opacity-50"
           >
-            {approveLoading ? "Sending..." : "2) Send Approval Event"}
+            {approveLoading ? "Running..." : "2) Send Approval Event"}
           </button>
         </div>
         <ResultBox result={approveResult} />
