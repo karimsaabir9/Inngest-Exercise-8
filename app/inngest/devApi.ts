@@ -1,9 +1,13 @@
 const DEV_SERVER_URL = process.env.INNGEST_DEV_SERVER_URL ?? "http://localhost:8288";
+const CLOUD_API_URL = "https://api.inngest.com";
+
+export const isDevMode = process.env.INNGEST_DEV === "1";
 
 interface RunSummary {
   run_id: string;
   status: string;
   event_id: string;
+  output?: string | null;
 }
 
 interface TraceSpan {
@@ -11,6 +15,18 @@ interface TraceSpan {
   status: string;
   outputID: string | null;
   childrenSpans: TraceSpan[];
+}
+
+function cloudHeaders(): HeadersInit {
+  const signingKey = process.env.INNGEST_SIGNING_KEY;
+  return signingKey ? { Authorization: `Bearer ${signingKey}` } : {};
+}
+
+// The dev server caches "no runs yet" responses for ~15s keyed by the exact
+// URL, so a fixed URL polled repeatedly can get stuck on a stale empty
+// result. Appending a cache-busting query param forces a fresh lookup.
+function cacheBust(url: string): string {
+  return `${url}?_cb=${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
 async function gql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -50,16 +66,23 @@ async function resolveOutput(outputId: string | null): Promise<unknown> {
   }
 }
 
-// The dev server caches "no runs yet" responses for ~15s keyed by the exact
-// URL, so a fixed URL polled repeatedly can get stuck on a stale empty
-// result. Appending a cache-busting query param forces a fresh lookup.
-function cacheBust(url: string): string {
-  return `${url}?_cb=${Date.now()}_${Math.random().toString(36).slice(2)}`;
+function parseJsonMaybe(raw: string | null | undefined): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
 
 async function getRunForEvent(eventId: string): Promise<RunSummary | null> {
-  const res = await fetch(cacheBust(`${DEV_SERVER_URL}/v1/events/${eventId}/runs`), {
+  const url = isDevMode
+    ? `${DEV_SERVER_URL}/v1/events/${eventId}/runs`
+    : `${CLOUD_API_URL}/v1/events/${eventId}/runs`;
+
+  const res = await fetch(cacheBust(url), {
     cache: "no-store",
+    headers: isDevMode ? {} : cloudHeaders(),
   });
   if (!res.ok) return null;
   const json = await res.json();
@@ -81,10 +104,22 @@ export async function findRunForEvent(
   return null;
 }
 
-// The dev server's REST run status can report "Completed" slightly before
-// the run's final output is actually available, so completion is
-// determined by the trace's outputID showing up (the source of truth used
-// by the dev UI), not by the REST status field.
+async function getRunById(runId: string): Promise<RunSummary | null> {
+  const url = isDevMode ? `${DEV_SERVER_URL}/v1/runs/${runId}` : `${CLOUD_API_URL}/v1/runs/${runId}`;
+  const res = await fetch(cacheBust(url), {
+    cache: "no-store",
+    headers: isDevMode ? {} : cloudHeaders(),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+// In dev mode, completion is determined by the dev server's internal trace
+// API (its REST "status" field can flip to "Completed" slightly before the
+// output is actually available). In production, Inngest Cloud's public REST
+// API is used instead, since the dev server's GraphQL trace endpoint only
+// exists locally.
 export async function waitForRunOutput(
   runId: string,
   { timeoutMs = 20000, intervalMs = 500 }: { timeoutMs?: number; intervalMs?: number } = {},
@@ -92,29 +127,49 @@ export async function waitForRunOutput(
   const deadline = Date.now() + timeoutMs;
   let lastStatus = "UNKNOWN";
 
-  while (Date.now() < deadline) {
-    const data = await gql<{ runTrace: TraceSpan }>(
-      `query($runID: String!) { runTrace(runID: $runID) { status outputID } }`,
-      { runID: runId },
-    );
-    const trace = data.runTrace;
-    lastStatus = trace?.status ?? lastStatus;
+  if (isDevMode) {
+    while (Date.now() < deadline) {
+      const data = await gql<{ runTrace: TraceSpan }>(
+        `query($runID: String!) { runTrace(runID: $runID) { status outputID } }`,
+        { runID: runId },
+      );
+      const trace = data.runTrace;
+      lastStatus = trace?.status ?? lastStatus;
 
-    // outputID is present as soon as the run starts (it's a pointer, not a
-    // completion signal) — only trust it once the status is COMPLETED.
-    if (lastStatus === "COMPLETED" || lastStatus === "FAILED" || lastStatus === "CANCELLED") {
-      return { status: lastStatus, result: await resolveOutput(trace?.outputID ?? null) };
+      // outputID is present as soon as the run starts (it's a pointer, not
+      // a completion signal) — only trust it once the status is COMPLETED.
+      if (lastStatus === "COMPLETED" || lastStatus === "FAILED" || lastStatus === "CANCELLED") {
+        return { status: lastStatus, result: await resolveOutput(trace?.outputID ?? null) };
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    return { status: lastStatus, result: null };
+  }
+
+  while (Date.now() < deadline) {
+    const run = await getRunById(runId);
+    lastStatus = run?.status ?? lastStatus;
+
+    if (["Completed", "Failed", "Cancelled"].includes(lastStatus)) {
+      return { status: lastStatus, result: parseJsonMaybe(run?.output) };
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   return { status: lastStatus, result: null };
 }
 
+// Dev-only: inspects an in-progress run's step-level trace to read a step's
+// output before the whole run finishes (used to show the "process-request"
+// step's output while the function is paused on step.waitForEvent()).
+// Inngest Cloud's public REST API doesn't expose per-step output, so this
+// is skipped in production — callers should fall back to a known value.
 export async function getStepOutput(
   runId: string,
   stepName: string,
   { timeoutMs = 8000, intervalMs = 300 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<unknown> {
+  if (!isDevMode) return null;
+
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
