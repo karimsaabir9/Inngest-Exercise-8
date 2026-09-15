@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { inngest } from "@/app/inngest/client";
-import { waitForRunOutput } from "@/app/inngest/devApi";
+import { isDevMode, waitForRunOutput } from "@/app/inngest/devApi";
 import { getWorkflowRun } from "@/app/inngest/workflowRuns";
 
 export async function POST(req: Request) {
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "No workflow run found for requestId" });
   }
 
-  const { status, result } = await waitForRunOutput(run, { timeoutMs: 20000 });
+  const { status, result } = await waitForRunOutput(run, { timeoutMs: isDevMode ? 20000 : 90000 });
 
   return NextResponse.json({ success: true, status, result });
 }

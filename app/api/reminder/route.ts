@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { inngest } from "@/app/inngest/client";
-import { findRunForEvent, waitForRunOutput } from "@/app/inngest/devApi";
+import { findRunForEvent, isDevMode, waitForRunOutput } from "@/app/inngest/devApi";
 
 export async function POST(req: Request) {
   const { message, delayMinutes } = await req.json();
@@ -17,7 +17,7 @@ export async function POST(req: Request) {
 
   const { status, result } = await waitForRunOutput(
     { eventId: ids[0], runId: run.run_id },
-    { timeoutMs: Number(delayMinutes) * 1000 + 15000 },
+    { timeoutMs: Number(delayMinutes) * 1000 + (isDevMode ? 15000 : 90000) },
   );
 
   return NextResponse.json({ success: true, status, result });
