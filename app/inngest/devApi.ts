@@ -90,10 +90,14 @@ async function getRunForEvent(eventId: string): Promise<RunSummary | null> {
 }
 
 // Finds the run created for an event. The run can take a moment to become
-// visible after the event is sent, so this retries briefly.
+// visible after the event is sent (much longer on an Inngest Cloud cold
+// start), so this retries for a while before giving up.
 export async function findRunForEvent(
   eventId: string,
-  { timeoutMs = 8000, intervalMs = 300 }: { timeoutMs?: number; intervalMs?: number } = {},
+  {
+    timeoutMs = isDevMode ? 8000 : 30000,
+    intervalMs = 300,
+  }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<RunSummary | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
