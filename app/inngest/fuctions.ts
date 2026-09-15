@@ -1,32 +1,17 @@
-import { NonRetriableError } from "inngest";
 import { inngest } from "./client";
-
-export const simpleGreeter = inngest.createFunction(
-  {
-    id: "simple-greeter",
-    triggers: { event: "greet/user" },
-  },
-  async ({ event, step }) => {
-    // step 1
-    const result = await step.run("say-hello", async () => {
-      return `Hello, ${event.data.name}!`;
-    });
-    return result;
-  },
-);
 
 export const dataProcessor = inngest.createFunction(
   {
     id: "data-processor",
     triggers: { event: "data/process" },
   },
-  async ({ event, step }) => {
+  async ({ step }) => {
     // step 1 fetch data
     const rowData = await step.run("fetch-data", async () => {
       console.log("Fetching data...");
       // simulate a delay
       await new Promise((resolve) => setTimeout(resolve, 3000));
-      return { users: ["Ali", "Baba", "Alex"] };
+      return { users: ["Ali", "Rayan", "Mc"] };
     });
     // step 2 process data
     const transformData = await step.run("transform-data", async () => {
@@ -44,33 +29,6 @@ export const dataProcessor = inngest.createFunction(
   },
 );
 
-export const emailSender = inngest.createFunction(
-  {
-    id: "email-sender",
-    triggers: { event: "email/send" },
-  },
-
-  async ({ event, step }) => {
-    // step 1 send email
-    const { emails } = event.data;
-    const results = [];
-
-    for (const email of emails) {
-      // send email
-      const result = await step.run("send-email", async () => {
-        console.log(`Sending email to ${email}...`);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        return { email, status: "send", timeStamp: new Date().toISOString() };
-      });
-      results.push(result);
-
-      if (email !== emails[emails.length - 1]) {
-        await step.sleep("wait-for-next-email", "2s");
-      }
-    }
-  },
-);
-
 export const approvalWorkflow = inngest.createFunction(
   {
     id: "approval-workflow",
@@ -79,7 +37,7 @@ export const approvalWorkflow = inngest.createFunction(
   async ({ event, step }) => {
     const { requestId, action } = event.data;
     // Step 1: Process the request
-    const processed = await step.run("process-request", async () => {
+    await step.run("process-request", async () => {
       console.log(`Processing request: ${action}`);
       return { requestId, action, status: "pending_approval" };
     });
@@ -113,52 +71,6 @@ export const approvalWorkflow = inngest.createFunction(
   },
 );
 
-export const apiFetcher = inngest.createFunction(
-  {
-    id: "api-fetcher",
-    retries: 1,
-    triggers: { event: "api/fetch" },
-  },
-
-  async ({ event, step }) => {
-    const { url } = event.data;
-
-    // This will automatically retry if it fails
-    const data = await step.run("fetch-api", async () => {
-      console.log(`Fetching from ${url}...`);
-
-      // Simulate random failures (for demo)
-      if (Math.random() > 0.3) {
-        throw new Error("API temporarily unavailable");
-      }
-
-      return { url, data: "Success!" };
-    });
-
-    return data;
-  },
-);
-
-export const validationFunction = inngest.createFunction(
-  {
-    id: "validation",
-    triggers: { event: "data/validate" },
-  },
-  async ({ event, step }) => {
-    const { email } = event.data;
-
-    const isValid = await step.run("validate-email", async () => {
-      if (!email.includes("@")) {
-        // Don't retry validation errors - they'll always fail
-        throw new NonRetriableError("Invalid email format");
-      }
-      return { email, valid: true };
-    });
-
-    return isValid;
-  },
-);
-
 export const reminder = inngest.createFunction(
   {
     id: "reminder",
@@ -181,75 +93,5 @@ export const reminder = inngest.createFunction(
     });
 
     return sent;
-  },
-);
-
-export const dailyReport = inngest.createFunction(
-  {
-    id: "daily-report",
-    // Run every minute (for testing - change to "0 9 * * *" for 9 AM daily)
-    triggers: { cron: "*/1 * * * *" }, // Every minute
-  },
-  async ({ step }) => {
-    const report = await step.run("generate-report", async () => {
-      const timestamp = new Date().toISOString();
-      console.log(`📊 Generating daily report at ${timestamp}`);
-
-      // Simulate report generation
-      return {
-        date: new Date().toDateString(),
-        metrics: {
-          users: Math.floor(Math.random() * 1000),
-          revenue: Math.floor(Math.random() * 10000),
-        },
-        generatedAt: timestamp,
-      };
-    });
-
-    return report;
-  },
-);
-
-export const batchProcessor = inngest.createFunction(
-  {
-    id: "batch-processor",
-    concurrency: 2,
-    triggers: { event: "batch/process" },
-  },
-  async ({ event, step }) => {
-    const { items } = event.data;
-    console.log(`Processing ${items.length} items...`);
-
-    // Process each item (queued automatically)
-    const results = await Promise.all(
-      items.map((item: string, index: number) =>
-        step.run(`process-item-${index}`, async () => {
-          console.log(`Processing item: ${item}`);
-          await new Promise((resolve) => setTimeout(resolve, 10000));
-          return { item, processed: true, timestamp: new Date().toISOString() };
-        }),
-      ),
-    );
-
-    return { processed: results.length, results };
-  },
-);
-
-export const creatUser = inngest.createFunction(
-  {
-    id: "create-user",
-    triggers: { event: "user/create" },
-  },
-  async ({ event, step }) => {
-    const { email, name } = event.data;
-    console.log(`Creating user: ${email}, ${name}`);
-
-    await step.run("send-welcome-email", async () => {
-      console.log(`Sending welcome email to ${email}...`);
-      await new Promise((resolve) => setTimeout(resolve, 10000));
-      return { email, name };
-    });
-
-    return { email, name };
   },
 );
